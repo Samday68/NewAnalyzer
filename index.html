@@ -94,6 +94,7 @@
         <div id="time">GMT 00:00:00</div>
         <div id="price">0.00</div>
       </div>
+      <div id="debugStatus" style="font-size:9px;color:#ffcc00;background:#000;padding:3px 6px;border-radius:3px;margin:3px 0;word-break:break-all;">Bağlanıyor...</div>
       <div id="chartContainer">
         <img id="chartWatermark" loading="lazy" src="https://raw.githubusercontent.com/Samday68/Foto-raflar/refs/heads/main/D354DBAF-3EC7-4B5F-ABC1-8EF876797DAA.jpeg" alt="" onerror="this.style.display='none';" />
         <canvas id="chart"></canvas>
@@ -144,12 +145,19 @@
     function _scheduleRender(){if(_pendingRender)return;_pendingRender=true;const now=Date.now(),elapsed=now-_lastTickRender,delay=Math.max(0,_tickRenderThrottle-elapsed);setTimeout(()=>{_pendingRender=false;_lastTickRender=Date.now();renderWormLines('numbersTop',wormLinesTop.slice(-DISPLAY_COUNT));},delay);}
 
     // WEBSOCKET (sadece genel/anonim fiyat akışı — kimlik doğrulama gerekmiyor)
+    function setDebug(txt,color){const el=document.getElementById('debugStatus');if(el){el.innerText=txt;el.style.color=color||'#ffcc00';}}
+
     function startWS(){
+      setDebug('Bağlanıyor: '+appId,'#ffcc00');
       ws=new WebSocket('wss://ws.derivws.com/websockets/v3?app_id='+encodeURIComponent(appId));
-      ws.onopen=()=>ws.send(JSON.stringify({ticks_history:currentPair,end:"latest",count:DISPLAY_COUNT,subscribe:1}));
+      ws.onopen=()=>{setDebug('Bağlandı, veri isteniyor...','#4caf50');ws.send(JSON.stringify({ticks_history:currentPair,end:"latest",count:DISPLAY_COUNT,subscribe:1}));};
+      ws.onerror=(e)=>{setDebug('WS HATASI (ağ/engel)','#ff4444');};
+      ws.onclose=(e)=>{setDebug('Bağlantı kapandı. code='+e.code+' reason='+(e.reason||'yok'),'#ff4444');};
       ws.onmessage=msg=>{
         let d;
-        try{d=JSON.parse(msg.data);}catch(e){return;}
+        try{d=JSON.parse(msg.data);}catch(e){setDebug('JSON parse hatası','#ff4444');return;}
+        if(d.error){setDebug('API HATASI: '+d.error.code+' - '+d.error.message,'#ff4444');return;}
+        if(d.tick||d.history){setDebug('Veri akıyor ✓','#4caf50');}
         if(d.history){d.history.prices.forEach(p=>{const ps=String(p),pr=parseFloat(p);prices.push(pr);if(prices.length>200)prices.shift();const parts=ps.split('.');const ip=parts[0];let dp=parts[1]||'0';if(dp.length===1)dp+=0;const ld=dp.charAt(dp.length-1)||'0';decimalDigits.push(ld);if(decimalDigits.length>200)decimalDigits.shift();updateWorm();});}
         if(d.tick){const ps=d.tick.quote.toString(),pr=parseFloat(d.tick.quote);prices.push(pr);if(prices.length>DISPLAY_COUNT)prices.shift();const parts=ps.split('.');const ip=parts[0];let dp=parts[1]||'0';if(dp.length===1)dp+='0';const ld=dp.charAt(dp.length-1)||'0';decimalDigits.push(ld);if(decimalDigits.length>DISPLAY_COUNT)decimalDigits.shift();updateWorm();const pe=document.getElementById('price');let dp2=ip+(dp&&dp!=='00'?','+dp:',00');pe.innerText=dp2;if(prices.length>1){const prev=prices[prices.length-2];if(pr>prev)pe.style.background='blue';else if(pr<prev)pe.style.background='red';else pe.style.background='#0b57d0';}}
         const row=document.getElementById('numbersTop');row.innerHTML='';numColors=[];
