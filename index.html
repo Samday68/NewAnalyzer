@@ -94,7 +94,6 @@
         <div id="time">GMT 00:00:00</div>
         <div id="price">0.00</div>
       </div>
-      <div id="debugStatus" style="font-size:9px;color:#ffcc00;background:#000;padding:3px 6px;border-radius:3px;margin:3px 0;word-break:break-all;">Bağlanıyor...</div>
       <div id="chartContainer">
         <img id="chartWatermark" loading="lazy" src="https://raw.githubusercontent.com/Samday68/Foto-raflar/refs/heads/main/D354DBAF-3EC7-4B5F-ABC1-8EF876797DAA.jpeg" alt="" onerror="this.style.display='none';" />
         <canvas id="chart"></canvas>
@@ -106,8 +105,8 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
 
   <script>
-    // Fiyat akışı için kendi App ID'niz (Deriv Developer Portal'da kayıt edildi).
-    const appId = '33TPWSsIgUyRkz9k8Wzbi';
+    // Yeni Oluşturduğunuz Deriv App ID
+    const appId = '33TU9k5YChTTzKDLR9xjc';
 
     const DISPLAY_COUNT = 20;
 
@@ -144,70 +143,230 @@
     function renderWormLines(cid,wa){requestAnimationFrame(()=>{const c=document.getElementById(cid);c.querySelectorAll('.worm-line').forEach(e=>e.remove());const boxes=c.querySelectorAll('.num-box');boxes.forEach((box,idx)=>{if(!wa[idx])return;const line=document.createElement('div');line.className='worm-line';line.style.width=box.offsetWidth+'px';line.style.left=box.offsetLeft+'px';line.style.top=(box.offsetTop+box.offsetHeight+0.2)+'px';line.style.borderTopColor=wa[idx];c.appendChild(line);});});}
     function _scheduleRender(){if(_pendingRender)return;_pendingRender=true;const now=Date.now(),elapsed=now-_lastTickRender,delay=Math.max(0,_tickRenderThrottle-elapsed);setTimeout(()=>{_pendingRender=false;_lastTickRender=Date.now();renderWormLines('numbersTop',wormLinesTop.slice(-DISPLAY_COUNT));},delay);}
 
-    // WEBSOCKET (sadece genel/anonim fiyat akışı — kimlik doğrulama gerekmiyor)
-    function setDebug(txt,color){const el=document.getElementById('debugStatus');if(el){el.innerText=txt;el.style.color=color||'#ffcc00';}}
-
+    // WEBSOCKET (Güncel Deriv API Standartları ile)
     function startWS(){
-      setDebug('Bağlanıyor: '+appId,'#ffcc00');
-      ws=new WebSocket('wss://ws.derivws.com/websockets/v3?app_id='+encodeURIComponent(appId));
-      ws.onopen=()=>{setDebug('Bağlandı, veri isteniyor...','#4caf50');ws.send(JSON.stringify({ticks_history:currentPair,end:"latest",count:DISPLAY_COUNT,subscribe:1}));};
-      ws.onerror=(e)=>{setDebug('WS HATASI (ağ/engel)','#ff4444');};
-      ws.onclose=(e)=>{setDebug('Bağlantı kapandı. code='+e.code+' reason='+(e.reason||'yok'),'#ff4444');};
-      ws.onmessage=msg=>{
+      ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=' + encodeURIComponent(appId));
+      
+      ws.onopen = () => {
+        // Geçmiş fiyatları iste
+        ws.send(JSON.stringify({
+          ticks_history: currentPair,
+          end: "latest",
+          count: DISPLAY_COUNT
+        }));
+        // Canlı akış aboneliği başlat
+        ws.send(JSON.stringify({
+          ticks: currentPair
+        }));
+      };
+
+      ws.onmessage = msg => {
         let d;
-        try{d=JSON.parse(msg.data);}catch(e){setDebug('JSON parse hatası','#ff4444');return;}
-        if(d.error){setDebug('API HATASI: '+d.error.code+' - '+d.error.message,'#ff4444');return;}
-        if(d.tick||d.history){setDebug('Veri akıyor ✓','#4caf50');}
-        if(d.history){d.history.prices.forEach(p=>{const ps=String(p),pr=parseFloat(p);prices.push(pr);if(prices.length>200)prices.shift();const parts=ps.split('.');const ip=parts[0];let dp=parts[1]||'0';if(dp.length===1)dp+=0;const ld=dp.charAt(dp.length-1)||'0';decimalDigits.push(ld);if(decimalDigits.length>200)decimalDigits.shift();updateWorm();});}
-        if(d.tick){const ps=d.tick.quote.toString(),pr=parseFloat(d.tick.quote);prices.push(pr);if(prices.length>DISPLAY_COUNT)prices.shift();const parts=ps.split('.');const ip=parts[0];let dp=parts[1]||'0';if(dp.length===1)dp+='0';const ld=dp.charAt(dp.length-1)||'0';decimalDigits.push(ld);if(decimalDigits.length>DISPLAY_COUNT)decimalDigits.shift();updateWorm();const pe=document.getElementById('price');let dp2=ip+(dp&&dp!=='00'?','+dp:',00');pe.innerText=dp2;if(prices.length>1){const prev=prices[prices.length-2];if(pr>prev)pe.style.background='blue';else if(pr<prev)pe.style.background='red';else pe.style.background='#0b57d0';}}
-        const row=document.getElementById('numbersTop');row.innerHTML='';numColors=[];
-        const sa=decimalDigits.slice(-DISPLAY_COUNT);const frag=document.createDocumentFragment();
-        for(let i=0;i<sa.length;i++){const gi=decimalDigits.length-DISPLAY_COUNT+i,up=gi>0&&prices[gi]>prices[gi-1],dn=gi>0&&prices[gi]<prices[gi-1];const c=up?'blue':(dn?'red':'#666');numColors.push(c);if(numColors.length>200)numColors.shift();const box=document.createElement('div');box.className='num-box';box.style.background=c;box.innerText=sa[i]||'0';frag.appendChild(box);}
+        try{ d = JSON.parse(msg.data); } catch(e){ return; }
+        
+        if (d.error) {
+          console.error("Deriv API Hatası:", d.error.message);
+          return;
+        }
+
+        if(d.history){
+          d.history.prices.forEach(p => {
+            const ps = String(p), pr = parseFloat(p);
+            prices.push(pr);
+            if(prices.length > 200) prices.shift();
+            const parts = ps.split('.');
+            let dp = parts[1] || '0';
+            if(dp.length === 1) dp += '0';
+            const ld = dp.charAt(dp.length - 1) || '0';
+            decimalDigits.push(ld);
+            if(decimalDigits.length > 200) decimalDigits.shift();
+            updateWorm();
+          });
+        }
+
+        if(d.tick){
+          const ps = d.tick.quote.toString(), pr = parseFloat(d.tick.quote);
+          prices.push(pr);
+          if(prices.length > DISPLAY_COUNT) prices.shift();
+          const parts = ps.split('.');
+          const ip = parts[0];
+          let dp = parts[1] || '0';
+          if(dp.length === 1) dp += '0';
+          const ld = dp.charAt(dp.length - 1) || '0';
+          decimalDigits.push(ld);
+          if(decimalDigits.length > DISPLAY_COUNT) decimalDigits.shift();
+          updateWorm();
+          
+          const pe = document.getElementById('price');
+          let dp2 = ip + (dp && dp !== '00' ? ',' + dp : ',00');
+          pe.innerText = dp2;
+          
+          if(prices.length > 1){
+            const prev = prices[prices.length - 2];
+            if(pr > prev) pe.style.background = 'blue';
+            else if(pr < prev) pe.style.background = 'red';
+            else pe.style.background = '#0b57d0';
+          }
+        }
+
+        const row = document.getElementById('numbersTop');
+        row.innerHTML = ''; 
+        numColors = [];
+        const sa = decimalDigits.slice(-DISPLAY_COUNT);
+        const frag = document.createDocumentFragment();
+        
+        for(let i = 0; i < sa.length; i++){
+          const gi = decimalDigits.length - DISPLAY_COUNT + i;
+          const up = gi > 0 && prices[gi] > prices[gi - 1];
+          const dn = gi > 0 && prices[gi] < prices[gi - 1];
+          const c = up ? 'blue' : (dn ? 'red' : '#666');
+          numColors.push(c);
+          if(numColors.length > 200) numColors.shift();
+          
+          const box = document.createElement('div');
+          box.className = 'num-box';
+          box.style.background = c;
+          box.innerText = sa[i] || '0';
+          frag.appendChild(box);
+        }
         row.appendChild(frag);
-        const lN=prices.slice(-DISPLAY_COUNT);
-        if(chart){chart.data.datasets[0].data=lN;chart.data.datasets[0].pointBackgroundColor=lN.map((p,i)=>{if(i===0)return'gray';if(p>lN[i-1])return'blue';if(p<lN[i-1])return'red';return'gray';});chart.data.datasets[0].pointBorderColor=Array(lN.length).fill('transparent');chart.data.labels=Array.from({length:lN.length},(_,i)=>(i+1).toString());chart.update('none');}
+
+        const lN = prices.slice(-DISPLAY_COUNT);
+        if(chart){
+          chart.data.datasets[0].data = lN;
+          chart.data.datasets[0].pointBackgroundColor = lN.map((p, i) => {
+            if(i === 0) return 'gray';
+            if(p > lN[i - 1]) return 'blue';
+            if(p < lN[i - 1]) return 'red';
+            return 'gray';
+          });
+          chart.data.datasets[0].pointBorderColor = Array(lN.length).fill('transparent');
+          chart.data.labels = Array.from({length: lN.length}, (_, i) => (i + 1).toString());
+          chart.update('none');
+        }
         _scheduleRender();
       };
     }
-    function updateTime(){const now=new Date();document.getElementById('time').innerText='GMT '+now.getUTCHours().toString().padStart(2,'0')+':'+now.getUTCMinutes().toString().padStart(2,'0')+':'+now.getUTCSeconds().toString().padStart(2,'0');}
+
+    function updateTime(){
+      const now = new Date();
+      document.getElementById('time').innerText = 'GMT ' + now.getUTCHours().toString().padStart(2, '0') + ':' + now.getUTCMinutes().toString().padStart(2, '0') + ':' + now.getUTCSeconds().toString().padStart(2, '0');
+    }
 
     // CHART
     function initChart(){
-      const ctx=document.getElementById('chart').getContext('2d');
-      chart=new Chart(ctx,{type:'line',data:{labels:Array.from({length:DISPLAY_COUNT},(_,i)=>(i+1).toString()),datasets:[{data:Array(DISPLAY_COUNT).fill(null),borderColor:'#fff',borderWidth:1.5,backgroundColor:'rgba(255,255,255,0.05)',pointBackgroundColor:Array(DISPLAY_COUNT).fill('#fff'),pointRadius:2,pointHoverRadius:3}]},options:{plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{y:{beginAtZero:false,grid:{color:'rgba(255,255,255,0.1)'},ticks:{color:'#fff'}},x:{grid:{color:'rgba(255,255,255,0.1)'},ticks:{color:'#fff'}}},animation:false,maintainAspectRatio:false},
-        plugins:[{afterDatasetsDraw(ci){
-          const ctx=ci.ctx,meta=ci.getDatasetMeta(0),isDark=!document.body.classList.contains('day-mode');
-          const decs=decimalDigits.slice(-DISPLAY_COUNT),colors=numColors.slice(-DISPLAY_COUNT);
-          ctx.font='900 15px sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';
-          const worms=wormLinesTop.slice(-DISPLAY_COUNT);
-          meta.data.forEach((pt,i)=>{let t=decs[i]||'';if(pt&&pt.x!==undefined){let fc=colors[i]||'#000';if(fc==='blue')fc='#6A9FFF';ctx.fillStyle=fc;ctx.fillText(t,pt.x,pt.y-2);const wc=worms[i];if(wc==='blue'||wc==='red'){ctx.strokeStyle=wc;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(pt.x-5,pt.y-2);ctx.lineTo(pt.x+5,pt.y-2);ctx.stroke();}}});
-          const last=meta.data[meta.data.length-1];if(last&&last.x!==undefined){ctx.strokeStyle=isDark?'#40E0D0':'#000';ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(ci.scales.x.left,last.y);ctx.lineTo(last.x,last.y);ctx.stroke();}
-        }}]
+      const ctx = document.getElementById('chart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: Array.from({length: DISPLAY_COUNT}, (_, i) => (i + 1).toString()),
+          datasets: [{
+            data: Array(DISPLAY_COUNT).fill(null),
+            borderColor: '#fff',
+            borderWidth: 1.5,
+            backgroundColor: 'rgba(255,255,255,0.05)',
+            pointBackgroundColor: Array(DISPLAY_COUNT).fill('#fff'),
+            pointRadius: 2,
+            pointHoverRadius: 3
+          }]
+        },
+        options: {
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: {
+            y: { beginAtZero: false, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#fff' } },
+            x: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#fff' } }
+          },
+          animation: false,
+          maintainAspectRatio: false
+        },
+        plugins: [{
+          afterDatasetsDraw(ci){
+            const ctx = ci.ctx, meta = ci.getDatasetMeta(0), isDark = !document.body.classList.contains('day-mode');
+            const decs = decimalDigits.slice(-DISPLAY_COUNT), colors = numColors.slice(-DISPLAY_COUNT);
+            ctx.font = '900 15px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+            const worms = wormLinesTop.slice(-DISPLAY_COUNT);
+            meta.data.forEach((pt, i) => {
+              let t = decs[i] || '';
+              if(pt && pt.x !== undefined){
+                let fc = colors[i] || '#000';
+                if(fc === 'blue') fc = '#6A9FFF';
+                ctx.fillStyle = fc;
+                ctx.fillText(t, pt.x, pt.y - 2);
+                const wc = worms[i];
+                if(wc === 'blue' || wc === 'red'){
+                  ctx.strokeStyle = wc;
+                  ctx.lineWidth = 2;
+                  ctx.beginPath();
+                  ctx.moveTo(pt.x - 5, pt.y - 2);
+                  ctx.lineTo(pt.x + 5, pt.y - 2);
+                  ctx.stroke();
+                }
+              }
+            });
+            const last = meta.data[meta.data.length - 1];
+            if(last && last.x !== undefined){
+              ctx.strokeStyle = isDark ? '#40E0D0' : '#000';
+              ctx.lineWidth = 0.5;
+              ctx.beginPath();
+              ctx.moveTo(ci.scales.x.left, last.y);
+              ctx.lineTo(last.x, last.y);
+              ctx.stroke();
+            }
+          }
+        }]
       });
     }
 
-    document.addEventListener('DOMContentLoaded',()=>{
-      setTimeout(()=>{document.getElementById('loadingIndicator').style.opacity='0';setTimeout(()=>{document.getElementById('loadingIndicator').style.display='none';},300);},1000);
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        document.getElementById('loadingIndicator').style.opacity = '0';
+        setTimeout(() => { document.getElementById('loadingIndicator').style.display = 'none'; }, 300);
+      }, 1000);
+      
       initChart();
-      document.querySelectorAll('.num-box,#chartContainer').forEach(el=>el.classList.add('performance-mode','hw-accelerate'));
-      document.getElementById('themeToggle').addEventListener('click',toggleTheme);
-      document.getElementById('startStopBtn').addEventListener('click',()=>{
-        prices=[];decimalDigits=[];wormLinesTop=[];numColors=[];
-        document.getElementById('numbersTop').innerHTML='';
-        if(chart){chart.data.datasets[0].data=Array(DISPLAY_COUNT).fill(null);chart.data.labels=Array.from({length:DISPLAY_COUNT},(_,i)=>(i+1).toString());chart.update('none');}
-        document.getElementById('price').innerText='0.00';document.getElementById('price').style.background='#0b57d0';
-        if(ws){try{ws.close();}catch(e){}}if(isRunning)startWS();
+      document.querySelectorAll('.num-box,#chartContainer').forEach(el => el.classList.add('performance-mode', 'hw-accelerate'));
+      document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+      
+      document.getElementById('startStopBtn').addEventListener('click', () => {
+        prices = []; decimalDigits = []; wormLinesTop = []; numColors = [];
+        document.getElementById('numbersTop').innerHTML = '';
+        if(chart){
+          chart.data.datasets[0].data = Array(DISPLAY_COUNT).fill(null);
+          chart.data.labels = Array.from({length: DISPLAY_COUNT}, (_, i) => (i + 1).toString());
+          chart.update('none');
+        }
+        document.getElementById('price').innerText = '0.00';
+        document.getElementById('price').style.background = '#0b57d0';
+        if(ws){ try{ ws.close(); }catch(e){} }
+        if(isRunning) startWS();
       });
-      setInterval(()=>{if(prices.length>100)prices.splice(0,prices.length-100);if(decimalDigits.length>100)decimalDigits.splice(0,decimalDigits.length-100);if(numColors.length>100)numColors.splice(0,numColors.length-100);if(wormLinesTop.length>100)wormLinesTop.splice(0,wormLinesTop.length-100);},300000);
-      document.querySelectorAll('.pair-btn').forEach(btn=>btn.addEventListener('click',function(){selectPair(this.getAttribute('data-pair'));}));
-      setInterval(updateTime,1000);updateTime();startWS();updateLogos();
-      if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/service-worker.js').then(r=>console.log('SW:',r.scope)).catch(e=>console.log('SW fail:',e)));
-      let _wl=null;
-      function _rwl(){if('wakeLock' in navigator)navigator.wakeLock.request('screen').then(wl=>{_wl=wl;wl.addEventListener('release',()=>setTimeout(_rwl,1000));}).catch(()=>{});}
-      document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){_rwl();if(!ws||ws.readyState!==WebSocket.OPEN){startWS();}}});
-      document.addEventListener('click',function ia(){_rwl();},{once:true});
+
+      setInterval(() => {
+        if(prices.length > 100) prices.splice(0, prices.length - 100);
+        if(decimalDigits.length > 100) decimalDigits.splice(0, decimalDigits.length - 100);
+        if(numColors.length > 100) numColors.splice(0, numColors.length - 100);
+        if(wormLinesTop.length > 100) wormLinesTop.splice(0, wormLinesTop.length - 100);
+      }, 300000);
+
+      document.querySelectorAll('.pair-btn').forEach(btn => btn.addEventListener('click', function(){ selectPair(this.getAttribute('data-pair')); }));
+      setInterval(updateTime, 1000);
+      updateTime();
+      startWS();
+      updateLogos();
+
+      if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(e => {}));
+      
+      let _wl = null;
+      function _rwl(){ if('wakeLock' in navigator) navigator.wakeLock.request('screen').then(wl => { _wl = wl; wl.addEventListener('release', () => setTimeout(_rwl, 1000)); }).catch(() => {}); }
+      
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState === 'visible'){
+          _rwl();
+          if(!ws || ws.readyState !== WebSocket.OPEN){ startWS(); }
+        }
+      });
+      document.addEventListener('click', function ia(){ _rwl(); }, {once: true});
     });
   </script>
-
 </body>
 </html>
